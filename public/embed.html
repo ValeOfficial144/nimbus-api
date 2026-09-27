@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nimbus API - Stream Embed</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #0f172a;
+            color: #f8fafc;
+            font-family: system-ui, -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+        }
+
+        input,
+        button {
+            padding: 10px 16px;
+            font-size: 1rem;
+            border-radius: 6px;
+            border: 1px solid #475569;
+            background: #0f172a;
+            color: #fff;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            background: #3b82f6;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        button:hover {
+            background: #2563eb;
+        }
+
+        #stream-container {
+            margin-top: 20px;
+            width: 100%;
+            aspect-ratio: 16/9;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .log {
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: #94a3b8;
+            white-space: pre-wrap;
+            background: #0f172a;
+            padding: 10px;
+            border-radius: 6px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h2>Nimbus Cloud Streamer</h2>
+        <div>
+            <input type="text" id="gameId" placeholder="Enter Game ID" value="sample-game-id" style="width: 250px;">
+            <button onclick="startStream()">Launch Stream</button>
+        </div>
+        <div id="stream-container">
+            <span id="placeholder-text">Stream offline. Initialize session above.</span>
+        </div>
+        <div class="log" id="log-box">Ready.</div>
+    </div>
+
+    <script>
+        function log(msg) {
+            const box = document.getElementById('log-box');
+            box.innerText += `\n[${new Date().toLocaleTimeString()}] ${msg}`;
+            box.scrollTop = box.scrollHeight;
+        }
+
+        async function startStream() {
+            const gameId = document.getElementById('gameId').value;
+            const container = document.getElementById('stream-container');
+
+            if (!gameId) {
+                alert('Provide a Game ID');
+                return;
+            }
+
+            log('Step 1: Generating temporary Blacknut account...');
+            try {
+                const accRes = await fetch('/api/accounts', { method: 'POST' });
+                const accData = await accRes.json();
+
+                if (!accData.success) {
+                    throw new Error(accData.error || 'Account generation failed');
+                }
+
+                const accessToken = accData.data.tokens.userToken.accessToken;
+                log(`Account created successfully. User: ${accData.data.nickname}`);
+
+                log('Step 2: Requesting cloud streaming session...');
+                const streamRes = await fetch('/api/stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ accessToken, gameId })
+                });
+
+                const streamData = await streamRes.json();
+                if (!streamData.success) {
+                    throw new Error(streamData.error || 'Stream allocation failed');
+                }
+
+                log('Stream session acquired. Mounting player interface.');
+                const streamUrl = streamData.data.streamUrl;
+
+                container.innerHTML = `<iframe src="${streamUrl}" allowfullscreen></iframe>`;
+            } catch (err) {
+                log(`ERROR: ${err.message}`);
+                alert(`Failed to start stream: ${err.message}`);
+            }
+        }
+    </script>
+</body>
+
+</html>
