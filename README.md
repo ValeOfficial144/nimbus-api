@@ -2,9 +2,7 @@
 if you liked stratus, you'll like this even more!
 
 # what is this?
-a cloud gaming API that auto-creates sorastream accounts and streams games to a browser via native WebRTC. no iframes, no embeds — just raw WebRTC video with full keyboard + mouse input forwarding.
-
-built with bun + fastify. hit `localhost:3000` and you get a game catalog, click a game, and it streams.
+this is ANOTHER cloud gaming bypass that uses sorastream instead of raccoongame. it's built to be faster, better, and more optimized. it's also easier to set up!
 
 # how it works
 1. creates a temp email via mail.tm
