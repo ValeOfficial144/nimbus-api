@@ -1,9 +1,12 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
+import fastifyWebsocket from "@fastify/websocket";
 import path from "path";
 import { fileURLToPath } from "url";
 import accountRoutes from "./accounts.js";
+import catalogRoutes from "./catalog.js";
 import { streamRoutes } from "./stream.js";
+import { signalRoutes } from "./signal.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,9 +22,12 @@ async function buildServer(): Promise<FastifyInstance> {
     },
   });
 
+  await app.register(fastifyWebsocket);
+
   await app.register(fastifyStatic, {
     root: path.join(__dirname, "../public"),
     prefix: "/",
+    index: "embed.html",
   });
 
   app.get("/health", async () => ({
@@ -30,7 +36,9 @@ async function buildServer(): Promise<FastifyInstance> {
   }));
 
   await app.register(accountRoutes, { prefix: "/api" });
+  await app.register(catalogRoutes, { prefix: "/api" });
   await app.register(streamRoutes, { prefix: "/api" });
+  await app.register(signalRoutes, { prefix: "/api" });
 
   return app;
 }

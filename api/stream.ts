@@ -1,194 +1,195 @@
-import {
-  type FastifyInstance,
-  type FastifyPluginAsync,
-  type FastifyRequest,
-  type FastifyReply,
+import type {
+  FastifyInstance,
+  FastifyPluginAsync,
+  FastifyRequest,
+  FastifyReply,
 } from "fastify";
 import axios from "axios";
-import type { AxiosInstance, AxiosResponse } from "axios";
+import type { AxiosInstance } from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import { CookieJar } from "tough-cookie";
-import { v4 as uuidv4 } from "uuid";
 
-interface StreamSessionRequest {
-  accessToken: string;
+interface StreamRequest {
+  token: string;
+  userId: string;
+  profileId: string;
   gameId: string;
+  gameName?: string;
+  lang?: string;
 }
 
-interface StreamStartResponse {
-  streamId?: string;
-  url?: string;
-  status?: string;
-  [key: string]: any;
+interface ExecData {
+  exec_ip: string;
+  exec_token: string;
+  entry_id: string;
+  lang_code: string;
+  region_code: string;
 }
 
-class BlacknutStreamClient {
+interface SoraExecResponse {
+  status: string;
+  data: ExecData;
+}
+
+interface QueueUpdate {
+  position: number | string;
+  retryIn: number;
+}
+
+class SorastreamStreamClient {
   private client: AxiosInstance;
-  private logger: FastifyInstance["log"];
-  private jar: CookieJar;
 
-  constructor(logger: FastifyInstance["log"]) {
-    this.logger = logger;
-    this.jar = new CookieJar();
-
-    const baseClient = axios.create({
-      baseURL: "https://api.blacknut.com",
-      timeout: 15000,
+  constructor(private readonly logger: FastifyInstance["log"]) {
+    const jar = new CookieJar();
+    const base = axios.create({
+      baseURL: "https://www.sorastream.com",
+      timeout: 15_000,
       withCredentials: true,
-      maxRedirects: 5,
       headers: {
-        Accept: "application/json, text/plain, */*",
-        "Accept-Language": "en-US",
+        Accept: "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
         "Cache-Control": "no-cache",
-        Connection: "keep-alive",
         "Content-Type": "application/json",
-        Origin: "https://app.blacknut.com",
+        Origin: "https://www.sorastream.com",
         Pragma: "no-cache",
-        Referer: "https://app.blacknut.com/",
         "User-Agent":
-          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
-        "X-Blk-Brand": "blacknut",
-        "X-Blk-User-Agent":
-          "Blacknut/5.0.4 client-desk/5.18.3 (Linux;DESKTOP;;)",
-        "X-Blk-Secure-Token":
-          "1790469387h7MEjGO8eqEUe5psaiBy_EDGkonIqMAp5oQTv4xZKEU=",
-        "sec-ch-ua":
-          '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Linux"',
+          "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0",
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-site",
+        "sec-fetch-site": "same-origin",
+        "sec-gpc": "1",
       },
     });
-
-    this.client = wrapper(baseClient);
-    (this.client.defaults as any).jar = this.jar;
+    this.client = wrapper(base);
+    (this.client.defaults as any).jar = jar;
   }
 
-  public async startStream(
-    accessToken: string,
+  async startSession(
+    token: string,
+    userId: string,
+    profileId: string,
     gameId: string,
-  ): Promise<StreamStartResponse> {
-    const timestamp = Date.now();
-    const playerUUID = uuidv4();
+    gameName = "",
+    lang = "en-US",
+    onQueue?: (update: QueueUpdate) => void,
+  ): Promise<{ server: string; execToken: string }> {
+    this.logger.info({ profileId, gameId }, "Starting Sorastream game session");
 
-    this.logger.info(
-      { gameId, playerUUID },
-      "Forking auth token for companion stream",
-    );
+    const execBody = {
+      data: {
+        client_id: "WebBrowser",
+        region_code: "US",
+        lang_code: lang,
+        entry_id: gameId,
+      },
+    };
+    const execHeaders = {
+      Cookie: `token=${token}; userId=${userId}; profileId=${profileId}`,
+      Referer: `https://www.sorastream.com/en-US/games/${gameId}`,
+    };
 
-    try {
-      await this.client.post(
-        `/api/v1/auth/fork?cb=${timestamp}`,
-        {
-          accessToken: accessToken,
-          target: "companion_app",
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        },
-      );
+    const deadline = Date.now() + 10 * 60 * 1000;
 
-      this.logger.info(
-        { gameId },
-        "Initiating WebRTC game stream start sequence",
-      );
-
-      const startResponse: AxiosResponse<StreamStartResponse> =
-        await this.client.post(
-          `/api/v1/games/${gameId}/start?cb=${Date.now()}`,
-          {
-            client: {
-              id: "blacknut",
-              version: "5.18.3",
-              os: "unknown",
-              bearer: "unknown",
-              protocol: "webrtc",
-            },
-            keyboardLayout: "qwerty",
-            playerUUID: playerUUID,
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-          },
-        );
-
-      let streamDetailsData = null;
+    while (Date.now() < deadline) {
       try {
-        const streamDetails: AxiosResponse<StreamStartResponse> =
-          await this.client.get(`/api/v1/streams?cb=${Date.now()}`, {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-          });
-        streamDetailsData = streamDetails.data;
-      } catch (streamErr: any) {
-        this.logger.warn(
-          { err: streamErr.message },
-          "Active streams query returned non-fatal notice",
+        const res = await this.client.post<SoraExecResponse>(
+          `/api/profiles/${profileId}/execs`,
+          execBody,
+          { headers: execHeaders },
         );
-      }
 
-      return {
-        startResult: startResponse.data,
-        activeStreams: streamDetailsData,
-      };
-    } catch (error: any) {
-      this.logger.error(
-        { err: error.message, response: error.response?.data },
-        "Stream initialization sequence failed",
-      );
-      throw new Error(
-        `Streaming failed: ${error.response?.data ? JSON.stringify(error.response.data) : error.message}`,
-      );
+        if (res.data.status !== "OK") {
+          throw new Error(`Sorastream exec failed: ${JSON.stringify(res.data)}`);
+        }
+
+        const { exec_ip: server, exec_token: execToken } = res.data.data;
+        return { server, execToken };
+      } catch (err: any) {
+        const errData = err.response?.data;
+        const errors: any[] = errData?.error?.errors ?? [];
+        const queued = errors.find((e: any) => e.string === "IrisErrnoUserHasBeenEnqueued");
+
+        if (queued) {
+          const retryIn: number = errData?.error?.data?.retry_in ?? 5;
+          const position: number | string = errData?.error?.data?.position ?? "?";
+          this.logger.info({ position, retryIn }, "Queued for game server, retrying…");
+          onQueue?.({ position, retryIn });
+          await new Promise((r) => setTimeout(r, retryIn * 1000));
+          continue;
+        }
+
+        throw err;
+      }
     }
+
+    throw new Error("Game server queue timed out after 10 minutes");
   }
 }
 
-const streamRoutes: FastifyPluginAsync = async (
+export const streamRoutes: FastifyPluginAsync = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
-  const streamClient = new BlacknutStreamClient(fastify.log);
+  const streamClient = new SorastreamStreamClient(fastify.log);
 
-  fastify.post<{ Body: StreamSessionRequest }>(
+  fastify.post<{ Body: StreamRequest }>(
     "/stream",
     {
       schema: {
         body: {
           type: "object",
-          required: ["accessToken", "gameId"],
+          required: ["token", "userId", "profileId", "gameId"],
           properties: {
-            accessToken: { type: "string" },
+            token: { type: "string" },
+            userId: { type: "string" },
+            profileId: { type: "string" },
             gameId: { type: "string" },
+            gameName: { type: "string" },
+            lang: { type: "string" },
           },
         },
       },
     },
     async (
-      request: FastifyRequest<{ Body: StreamSessionRequest }>,
+      request: FastifyRequest<{ Body: StreamRequest }>,
       reply: FastifyReply,
     ) => {
-      const { accessToken, gameId } = request.body;
+      const { token, userId, profileId, gameId, gameName, lang } = request.body;
+      const acceptSSE = request.headers.accept === "text/event-stream";
+
+      if (acceptSSE) {
+        reply.raw.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+
+        const sendEvent = (event: string, data: unknown) => {
+          reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        try {
+          const result = await streamClient.startSession(
+            token, userId, profileId, gameId, gameName, lang,
+            (update) => sendEvent("queue", update),
+          );
+          sendEvent("ready", result);
+        } catch (error: any) {
+          sendEvent("error", { error: error.message });
+        }
+        reply.raw.end();
+        return;
+      }
 
       try {
-        const result = await streamClient.startStream(accessToken, gameId);
-        return reply.code(200).send({
-          success: true,
-          data: result,
-        });
+        const result = await streamClient.startSession(
+          token, userId, profileId, gameId, gameName, lang,
+        );
+        return reply.code(200).send({ success: true, data: result });
       } catch (error: any) {
-        return reply.code(500).send({
-          success: false,
-          error: error.message,
-        });
+        const detail = error.response?.data ?? error.message;
+        fastify.log.error({ detail }, "stream session failed");
+        return reply.code(500).send({ success: false, error: error.message, detail });
       }
     },
   );
 };
-
-export { streamRoutes, BlacknutStreamClient };
