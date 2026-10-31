@@ -2,53 +2,57 @@
 if you liked stratus, you'll like this even more!
 
 # what is this?
-this is ANOTHER cloud gaming bypass that uses blacknut instead of raccoongame. it's built to be faster, better, and more optimized. it's also easier to set up!
+a cloud gaming API that auto-creates sorastream accounts and streams games to a browser via native WebRTC. no iframes, no embeds — just raw WebRTC video with full keyboard + mouse input forwarding.
 
-# project notes/structure
+built with bun + fastify. hit `localhost:3000` and you get a game catalog, click a game, and it streams.
+
+# how it works
+1. creates a temp email via mail.tm
+2. signs up on sorastream, verifies email, activates free trial
+3. loads the game catalog (~400 free games)
+4. when you click a game, starts a session and negotiates WebRTC directly to the game server
+5. binary input (mouse/keyboard) is forwarded over the data channel
+
+# project structure
 ```
-.
-├── api/
-│   ├── mail/
-│   │   ├── useMalq.ts
-│   │   └── useOther.ts
-│   ├── accounts.ts
-│   ├── index.ts
-│   └── stream.ts
-│   └── status.ts
-├── docs/
-│   └── INDEX.md
-├── public/
-│   ├── embed.html
-│   └── logo.svg
-├── .env.example
-├── .gitignore
-├── bun.lock
-├── package.json
-├── README.md
-└── tsconfig.json
+api/
+  index.ts        — fastify app, registers all routes
+  accounts.ts     — POST /api/accounts — auto-creates sorastream account
+  catalog.ts      — GET  /api/catalog/games, /genres, /games/:id
+  stream.ts       — POST /api/stream — starts game session (SSE queue updates)
+  signal.ts       — GET  /api/signal?server= (WebSocket) — proxies WebRTC signaling
+  mail/
+    useOther.ts   — mail.tm client
+public/
+  embed.html      — full UI: game grid + native WebRTC player with input
 ```
 
-# how to run nimbus
-1. go to your vps and clone this repo anywhere you want
-2. install dependencies with your package manager (ex. bun, npm, yarn, etc)
-3. set your env (just port basically)
-4. spin up your instance (i recommend using pm2)
+# how to run
+1. clone the repo
+2. install deps
+```bash
+bun install
+```
+3. run it
+```bash
+bun run dev
+```
+4. open `http://localhost:3000`
+
+# production deployment
 ```bash
 pm2 start "bun run start" --name nimbus
 pm2 save
 ```
-5. link it to your app with caddy (or nginx if you want). in your caddyfile:
+
+reverse proxy with caddy:
 ```Caddyfile
-:443 { # for byod, but do this wherever your site blocks are
+:443 {
     handle /api/nimbus* {
         reverse_proxy 127.0.0.1:3000
     }
-
-    # other config
 }
 ```
 
-# recommendations and tips
-- use caddy
-- use bun
-- use malq as your email api (code ships for it, so why not!)
+# license
+source-available with required attribution. see [LICENSE](LICENSE). if you use this, you must credit me visibly.
