@@ -7,7 +7,7 @@ this is ANOTHER cloud gaming bypass that uses sorastream instead of raccoongame.
 # how it works
 1. creates a temp email via mail.tm
 2. signs up on sorastream, verifies email, activates free trial
-3. loads the game catalog (~400 free games)
+3. loads the game catalog (195 free games)
 4. when you click a game, starts a session and negotiates WebRTC directly to the game server
 5. binary input (mouse/keyboard) is forwarded over the data channel
 
