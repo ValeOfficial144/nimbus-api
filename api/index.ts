@@ -43,7 +43,7 @@ async function buildServer(): Promise<FastifyInstance> {
   return app;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.main) {
   (async () => {
     try {
       const server = await buildServer();
