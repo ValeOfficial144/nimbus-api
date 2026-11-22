@@ -109,14 +109,26 @@
     }
     .play-icon svg { width: 16px; height: 16px; fill: #fff; margin-left: 3px; }
 
-    /* ── fullscreen player ── */
+
     #player {
       display: none;
       position: fixed; inset: 0;
       background: #000;
       z-index: 100;
     }
-    #player.open { display: block; }
+    #player.open { display: block; cursor: none; }
+    #player.show-cursor { cursor: default; }
+    #player .topbar { cursor: default; }
+    #player .topbar .actions { display: flex; gap: 8px; }
+    body:has(#player.open) { overflow: hidden; }
+
+    .tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+    .tools input[type=search] {
+      background: #0f172a; border: 1px solid #1e293b; color: #e2e8f0;
+      border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; min-width: 220px; outline: none;
+    }
+    .tools input[type=search]:focus { border-color: #3b82f6; }
+    .tools label { color: #94a3b8; font-size: 0.8rem; display: flex; align-items: center; gap: 6px; cursor: pointer; }
 
     #player canvas.ambient {
       position: absolute; inset: 0;
@@ -209,17 +221,22 @@
 
   <main>
     <h2 id="section-label">Setting up…</h2>
+    <div class="tools">
+      <input type="search" id="search" placeholder="Search games…" autocomplete="off">
+    </div>
     <div class="skeleton-grid" id="skeleton"></div>
     <div class="game-grid" id="game-grid" style="display:none"></div>
   </main>
 
-  <!-- native WebRTC player -->
   <div id="player" class="connecting">
     <canvas class="ambient" id="ambient"></canvas>
     <video id="video" autoplay playsinline muted></video>
     <div class="topbar">
       <span class="title" id="player-title"></span>
-      <button onclick="closePlayer()">Exit</button>
+      <div class="actions">
+        <button onclick="toggleCursor()">Cursor</button>
+        <button onclick="closePlayer()">Exit</button>
+      </div>
     </div>
     <div class="overlay">
       <div class="connecting-dots"><span></span><span></span><span></span></div>
@@ -247,11 +264,47 @@
     skeletonEl.innerHTML += `<div class="skeleton-card"><div class="skeleton-img"></div><div class="skeleton-label"></div></div>`;
   }
 
+  function isPlayable(g) {
+    return g.type === 'ludium' && !g.blur_for_guests;
+  }
+
+  async function fetchAllGames() {
+    const size = 100;
+    const seen = new Set();
+    let all = [];
+    for (let page = 0; page < 30; page++) {
+      const res = await fetch(`/api/catalog/games?locale=en-US&page=${page}&size=${size}`).then(r => r.json());
+      if (res?.status !== 'OK') {
+        if (page === 0) return res;
+        break;
+      }
+      const games = res.data.games || [];
+      const fresh = games.filter(g => !seen.has(g.game_id));
+      if (fresh.length === 0) break;
+      fresh.forEach(g => seen.add(g.game_id));
+      all = all.concat(fresh.filter(isPlayable));
+    }
+    return { status: 'OK', data: { games: all } };
+  }
+
+  let allGames = [];
+
+  function applyFilters() {
+    const q = document.getElementById('search').value.trim().toLowerCase();
+    const list = allGames.filter(g => !q || (g.title || '').toLowerCase().includes(q));
+    document.getElementById('section-label').textContent = `Games (${list.length})`;
+    renderGames(list);
+  }
+
+  function toggleCursor() {
+    document.getElementById('player').classList.toggle('show-cursor');
+  }
+
   async function boot() {
     setStatus('Connecting…', '');
     const [accountRes, catalogRes] = await Promise.allSettled([
       fetch('/api/accounts', { method: 'POST' }).then(r => r.json()),
-      fetch('/api/catalog/games?locale=en-US&page=0&size=200').then(r => r.json()),
+      fetchAllGames(),
     ]);
 
     if (accountRes.status === 'rejected' || !accountRes.value?.success) {
@@ -270,15 +323,16 @@
     }
 
     setStatus('Ready', 'ready');
-    const freeGames = catalogRes.value.data.games.filter(g => g.type === 'ludium' && !g.blur_for_guests);
-    document.getElementById('section-label').textContent = `Games (${freeGames.length})`;
-    renderGames(freeGames);
+    allGames = catalogRes.value.data.games;
+    document.getElementById('search').addEventListener('input', applyFilters);
+    applyFilters();
   }
 
   function renderGames(games) {
     const grid = document.getElementById('game-grid');
     skeletonEl.style.display = 'none';
     grid.style.display = 'grid';
+    grid.innerHTML = '';
     games.forEach(game => {
       const imgPath = game.thumb_vertical?.esc_150_url || game.thumb_horizontal?.esc_150_url || '';
       const title = game.title || game.game_id;
@@ -294,7 +348,7 @@
     });
   }
 
-  // ── encode a JSON data-channel message: uint32LE length prefix + UTF-8 JSON ──
+
   function encodeMsg(obj) {
     const json = JSON.stringify(obj);
     const body = new TextEncoder().encode(json);
@@ -304,7 +358,7 @@
     return buf;
   }
 
-  // ── decode incoming JSON data-channel message: skip uint32 prefix ──
+
   function decodeMsg(buf) {
     try {
       const dv = new DataView(buf instanceof ArrayBuffer ? buf : buf.buffer);
@@ -314,8 +368,6 @@
     } catch { return null; }
   }
 
-  // ── binary input protocol ──
-  // message format: [uint32 type][uint32 subtype][...fields]
   const INPUT = 3, ACTION = 0;
   const MOUSE_MOVE = 0, MOUSE_LDOWN = 1, MOUSE_MDOWN = 2, MOUSE_RDOWN = 3;
   const MOUSE_LUP = 4, MOUSE_MUP = 5, MOUSE_RUP = 6, MOUSE_WHEEL = 7;
@@ -327,9 +379,9 @@
     dv.setUint32(0, INPUT, true);
     dv.setUint32(4, ACTION, true);
     dv.setUint32(8, winId, true);
-    dv.setUint32(12, 0, true);    // widgetID = 0 (mouse)
+    dv.setUint32(12, 0, true);   
     dv.setUint32(16, action, true);
-    dv.setUint32(20, 8, true);    // data size hint
+    dv.setUint32(20, 8, true);    
     dv.setFloat32(24, x, true);
     dv.setFloat32(28, y, true);
     return buf;
@@ -341,9 +393,9 @@
     dv.setUint32(0, INPUT, true);
     dv.setUint32(4, ACTION, true);
     dv.setUint32(8, winId, true);
-    dv.setUint32(12, 1, true);    // widgetID = 1 (keyboard)
+    dv.setUint32(12, 1, true);    
     dv.setUint32(16, action, true);
-    dv.setUint32(20, 4, true);    // data size hint
+    dv.setUint32(20, 4, true);   
     dv.setUint32(24, keyCode, true);
     return buf;
   }
@@ -438,7 +490,7 @@
         const dc = e.channel;
         dataChannel = dc;
         dc.binaryType = 'arraybuffer';
-        let dcStage = 'auth'; // auth → config → apprun → playing
+        let dcStage = 'auth'; 
 
         dc.onopen = () => {
           document.getElementById('player-status').textContent = 'Authenticating…';
@@ -449,7 +501,7 @@
           const raw = e.data instanceof ArrayBuffer ? e.data : e.data.buffer;
 
           if (dcStage === 'playing') {
-            // binary game-loop messages — check for WINDOW_CREATED (type=0 GRAPHICS, subtype=0)
+       
             if (raw.byteLength >= 12) {
               const hdr = new DataView(raw);
               const type = hdr.getUint32(0, true);
@@ -512,7 +564,7 @@
           await pc.setRemoteDescription(msg);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          // wait for ICE gathering — 5s fallback if event never fires
+
           await new Promise(r => {
             if (pc.iceGatheringState === 'complete') return r();
             const fallback = setTimeout(r, 5000);
@@ -527,15 +579,14 @@
 
       sigWs.onerror = () => reject(new Error('Signal WebSocket error'));
       sigWs.onclose = () => {
-        // signaling done — WebRTC takes over from here
+   
       };
 
-      // timeout
+
       setTimeout(() => reject(new Error('Connection timeout')), 30_000);
     });
   }
 
-  // draw a blurred copy of the video onto the ambient canvas
   function startAmbient(video) {
     const canvas = document.getElementById('ambient');
     const ctx = canvas.getContext('2d');
